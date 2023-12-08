@@ -38,14 +38,40 @@
 ########################
 
 default_kv_user_dir="$HOME/.kv-bash"
+KV_USER_DIR=${KV_USER_DIR:-}
+KV_COLORED=${KV_COLORED:-0}
+
+#[[ $(type -t Debug) == function ]] || source /www/lib/log.sh
 
 ########################
 # LOCAL FUNCTIONS
 ########################
 
+TERM=${TERM:-xterm-256color}
+[ "${TERM}" == "dumb" ] && TERM="xterm-256color"
+
+if [ "${KV_COLORED}" == "1" ]
+then
+    KV_KEY=`tput -T${TERM} setaf 3`
+    KV_VAL=`tput -T${TERM} setaf 2`
+    KV_NC=$(tput -T${TERM} sgr0)
+else
+    KV_KEY=''
+    KV_VAL=''
+    KV_NC=''
+fi
+
 # print to stderr, red color
 kv_echo_err() {
-	echo -e "\e[01;31m$@\e[0m" >&2
+	if [ "${KV_COLORED}" == "1" ]
+	then
+		echo -e "\e[01;31m$@\e[0m" >&2
+	elif [[ $(type -t Debug) == function ]]
+	then
+		Debug "$@"
+	else
+		echo "$@" >&2
+	fi
 }
 
 # Usage: kv_echo_err_box <err-msg> <function-name>
@@ -56,11 +82,41 @@ kv_echo_err_box() {
 	kv_echo_err "  | function: $2"
 	kv_echo_err "  | dir: $kv_user_dir"
 	kv_echo_err "  +-------------------------------+"
+	# kv_echo_err "  ERROR: $1"
+	# kv_echo_err "  function: $2"
+	# kv_echo_err "  dir: $kv_user_dir"
+	LogStacktrace
+}
+
+# Usage: kv_validate_key_pathpart <key_filepart> (the part of key name before last /)
+kv_validate_key_pathpart() {
+	# important: do not allow . for traversing upwards
+	[[ "$1" =~ ^[0-9a-zA-Z_.-][0-9a-zA-Z./_-]*$ ]] && [[ ! "$1" =~ ((^|[/])[.]([/]|[.]?$)) ]]
+}
+
+# Usage: kv_validate_key_filepart <key_filepart> (the last part of key name after last /)
+kv_validate_key_filepart() {
+	# important: do not allow / for sub directories
+	[[ "$1" =~ ^[0-9a-zA-Z._-]+$  ]] && [[ ! "$1" =~ (^[.]+$) ]]
 }
 
 # Usage: kv_validate_key <key>
 kv_validate_key() {
-	[[ "$1" =~ ^[0-9a-zA-Z._:-]+$  ]]
+	# extract path part of key
+	[[ "$1" == */* ]] && local k_pathpart="${1%/*}" || local k_pathpart=""
+	local k_filepart="${1##*/}"
+
+	# if debug output is requested
+	if [ ! -z "${2+x}" ]
+	then
+		ck="$(kv_echo_err "not ok" 2>&1)"
+		([[ -z "${k_pathpart}" ]] || kv_validate_key_pathpart "${k_pathpart}") && ck="ok"
+		echo "k_pathpart=$k_pathpart [${ck}]"
+		(kv_validate_key_filepart "${k_filepart}") && ck="ok"
+		echo "k_filepart=$k_filepart [${ck}]"
+	fi
+
+	([[ -z "${k_pathpart}" ]] || kv_validate_key_pathpart "${k_pathpart}") && kv_validate_key_filepart "${k_filepart}"
 }
 
 ########################
@@ -71,7 +127,7 @@ kv_validate_key() {
 	kv_echo_err "  +------------------------------------------------+"
 	kv_echo_err "  | FATAL ERROR: wrong usage :(                    |"
 	kv_echo_err "  | You should use this via source                 |"
-	kv_echo_err "  |     $ source ./kv-bash                         |"	
+	kv_echo_err "  |     $ source ./kv-bash                         |"
 	kv_echo_err "  |                                                |"
 	kv_echo_err "  | Examples:                                      |"
 	kv_echo_err "  |     $ source ./kv-bash                         |"
@@ -97,58 +153,265 @@ kv_validate_key() {
 ########################
 
 # Usage: kvget <key>
-kvget() {
-	key="$1"
+kvexists() {
+	local key="$1"
+	key=${key#/*}
+
 	kv_validate_key "$key" || {
-		kv_echo_err_box 'invalid param "key"' 'kvget()'
+		kv_echo_err_box "invalid param \"key [$key]\"" 'kvget()'
 		return 1
 	}
-	kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
-	VALUE="$([ -f "$kv_user_dir/$key" ] && cat "$kv_user_dir/$key")"
-	echo "$VALUE"
-	
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+
+	[[ "$key" == */* ]] && local k_pathpart="${key%/*}" || local k_pathpart=""
+	local k_filepart="${key##*/}"
+	local subdir=""
+	[ ! -z "${k_pathpart}" ] && subdir="/${k_pathpart//\//@/}@"
+
+	[ -f "${kv_user_dir}${subdir}/${k_filepart}" ]
+}
+
+# Usage: kvget <key>
+kvget() {
+	local key="$1"
+	local default="${2+x}"
+	key=${key#/*}
+
+	kv_validate_key "$key" || {
+		kv_echo_err_box "invalid param \"key [$key]\"" 'kvget()'
+		return 1
+	}
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+
+	[[ "$key" == */* ]] && local k_pathpart="${key%/*}" || local k_pathpart=""
+	local k_filepart="${key##*/}"
+	local subdir=""
+	[ ! -z "${k_pathpart}" ] && subdir="/${k_pathpart//\//@/}@"
+
+	local VALUE="$([ -f "${kv_user_dir}${subdir}/${k_filepart}" ] && cat "${kv_user_dir}${subdir}/${k_filepart}")"
+	# echo "${VALUE:-${default}}"
+	echo "${KV_VAL}${VALUE:-${default}}${KV_NC}"
+
 	[ "$VALUE" != "" ]
 }
 
-# Usage: kvset <key> [value] 
-kvset() {
-	key="$1"
-	value="$2"
-	kv_validate_key "$key" || {
-		kv_echo_err_box 'invalid param "key"' 'kvset()'
+kvgrep() {
+	local value="$1"
+	local path="${2}"
+	local opt="${3:-k}" # k=key, v=value
+	path=${path#/*}
+
+	[[ -z "${path}" ]] || kv_validate_key_pathpart "${path}" || {
+		kv_echo_err_box "invalid param \"path [$path]\"" 'kvgrep()'
 		return 1
 	}
-	kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
-	test -d "$kv_user_dir" || mkdir "$kv_user_dir"
-	echo "$value" > "$kv_user_dir/$key"
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+
+	local subdir=""
+	[ ! -z "${path}" ] && subdir="/${path//\//@/}@"
+
+	test -d "${KV_USER_DIR}${subdir}" || return	1
+	# search for <value>
+	for key in $(grep -r -l "${value}" "${KV_USER_DIR}${subdir}")
+	do
+		key=${key//@/}
+		key=${key#${KV_USER_DIR}*/}
+
+		[[ "${opt}" =~ k ]] && echo -n "${KV_KEY}${key}${KV_NC}"
+
+		if [[ "${opt}" =~ v ]]
+		then
+			[[ "${opt}" =~ k ]] && echo -n "="
+
+			val="$(kvget "${key}")"
+			echo -n "${val}"
+		fi
+		echo
+	done
+}
+
+kvfind() {
+	local key="$1"
+	local path="${2}" # where to search
+	local type="${3:-k}" # k=key, v=path
+	path=${path#/*}
+
+	[[ -z "${path}" ]] || kv_validate_key_pathpart "${path}" || {
+		kv_echo_err_box "invalid param \"path [$path]\"" 'kvgrep()'
+		return 1
+	}
+
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+
+	local subdir=""
+	[ ! -z "${path}" ] && subdir="/${path//\//@/}@"
+
+	test -d "${KV_USER_DIR}${subdir}" || return	1
+	# search for <value>
+
+	for key in $(find "${KV_USER_DIR}${subdir}" -name "${key}" )
+	do
+		key=${key//@/}
+		key=${key#${KV_USER_DIR}*/}
+
+		[[ "${type}" =~ k ]] && echo -n "${KV_KEY}${key}${KV_NC}"
+
+		if [[ "${type}" =~ v ]]
+		then
+			[[ "${type}" =~ k ]] && echo -n "="
+
+			val="$(kvget "${key}")"
+			echo -n "${val}"
+		fi
+		echo
+	done
+}
+
+# Usage: kvset <key> [value]
+kvset() {
+	local key="$1"
+	local value="$2"
+
+	key=${key#/*}
+	kv_validate_key "${key}" || {
+		kv_echo_err_box "invalid param \"key [$key]\"" 'kvset()'
+		return 1
+	}
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+
+	[[ "$key" == */* ]] && local k_pathpart="${key%/*}" || local k_pathpart=""
+	local k_filepart="${key##*/}"
+	local subdir=""
+	[ ! -z "${k_pathpart}" ] && subdir="/${k_pathpart//\//@/}@"
+
+	test -d "${kv_user_dir}${subdir}" || mkdir -p "${kv_user_dir}${subdir}"
+	echo "$value" > "${kv_user_dir}${subdir}/${k_filepart}"
 }
 
 # Usage: kvdel <key>
 kvdel() {
-	key="$1"
+	local key="$1"
+	local type="${2:-key}"
+
+	key=${key#/*}
+
+	local t_del_key=
+	local t_del_path=
+
+	case "${type:-key}" in
+		key)  t_del_key=1
+			;;
+		path) t_del_path=1
+			;;
+		all) t_del_key=1
+			 t_del_path=1
+		 	;;
+	 	*)  kv_echo_err_box "invalid param \"type [$type]\"" 'kvdel()'
+			return 1
+			;;
+	esac
+
 	kv_validate_key "$key" || {
-		kv_echo_err_box 'invalid param "key"' 'kvdel()'
+		kv_echo_err_box "invalid param \"key [$key]\"" 'kvdel()'
 		return 1
 	}
-	kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
-	test -f "$kv_user_dir/$key" && rm -f "$kv_user_dir/$key"
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+	[[ "$key" == */* ]] && local k_pathpart="${key%/*}" || local k_pathpart=""
+	local k_filepart="${key##*/}"
+	local subdir=""
+	[ ! -z "${k_pathpart}" ] && subdir="/${k_pathpart//\//@/}@"
+
+	if [ $t_del_key ]
+	then
+		test -f "${kv_user_dir}${subdir}/${k_filepart}" && rm -f "${kv_user_dir}${subdir}/${k_filepart}"
+	fi
+
+	if [ $t_del_path ]
+	then
+		test -d "${kv_user_dir}${subdir}/${k_filepart}@" && rm -rf "${kv_user_dir}${subdir}/${k_filepart}@"
+	fi
+}
+
+kvflush_garbage() {
+	# removes all empty dirs
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+	find $kv_user_dir -empty -type d -delete
 }
 
 # list all key/value pairs to stdout
 # Usage: kvlist
 kvlist() {
-	kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
-	for i in "$kv_user_dir/"*; do
-		if [ -f "$i" ]; then
-			key="$(basename "$i")"
-			echo "$key" "$(kvget "$key")"
+	local key="$1"
+	# r= recursive
+	# j= java style (folders have an appended @)
+	# k= show key name
+	# v= show value
+	local format="${2:-kv}"
+	local k_pathpart=""
+	local k_filepart=""
+	local k_dir=""
+
+	key=${key%*/}
+	key=${key#/*}
+
+	if [[ ! -z "$key" ]]
+	then
+		kv_validate_key "$key" || {
+			kv_echo_err_box 'invalid param "key='$k_pathpart'"' 'kvlist()'
+			return 1
+		}
+	fi
+
+	local subdir=""
+	[ ! -z "${key}" ] && subdir="/${key//\//@/}@"
+
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+
+	[ -d ${kv_user_dir}${subdir} ] || return 1
+
+	for i in ${kv_user_dir}${subdir}/*
+	do
+		# echo "debug: $i"
+		local subkey="${key}/${i##*/}"
+		subkey=${subkey#/*}
+		if [ -f "$i" ]
+		then
+			if kv_validate_key "${subkey}"
+			then
+				local subkeyname="${subkey}"
+				[[ "${format}" =~ j ]] && local subkeyname="${subkey//\//@/}" || local subkeyname="${subkey}"
+
+				[[ "${format}" =~ k ]] && echo -n "${KV_KEY}${subkeyname}${KV_NC}"
+				if [[ "${format}" =~ v ]]
+				then
+					[[ "${format}" =~ k ]] && echo -n "="
+					echo -n "${KV_VAL}$(kvget "$subkey")${KV_NC}"
+				fi
+				echo
+			fi
+		elif [ -d "$i" ]
+		then
+			if [[ "${format}" =~ r ]]
+			then
+				kvlist "${subkey%*@}" "${format}"
+			else
+				[[ "${format}" =~ j ]] && subkey="${subkey//\//@/}" || subkey=${subkey%*@}
+
+				[[ "${format}" =~ k ]] && echo -n "${KV_KEY}${subkey}${KV_NC}"
+				if [[ "${format}" =~ v ]]
+				then
+					[[ "${format}" =~ k ]] && echo -n "="
+					echo -n "${KV_VAL}{}${KV_NC}"
+				fi
+				echo
+			fi
 		fi
-	done 
+	done
 }
 
 # clear all key/value pairs in database
 # Usage: kvclear
 kvclear() {
-  kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
+	local kv_user_dir=${KV_USER_DIR:-$default_kv_user_dir}
 	rm -rf "$kv_user_dir"
 }

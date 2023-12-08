@@ -23,19 +23,23 @@ $ source ./kv-bash         # import kv-bash functions
 use database functions
 
 ```bash
-kvset <key> <value>                 # create or change value of key
-kvget <key> [<default-value>]       # get value of key or get the optional default
-kvdel <key> [type: key|path|all]    # delete key or path
-                                    #   type=key -> just delete key 
-                                    #   type=path -> just delete path (all keys below <key>!) 
-                                    #   type=all -> delete key and path 
-kvlist [<path>] [format: [j][r]]    # list all current key/value pairs. 
-                                    #   format=j -> mark folders with a trailing @. useful when json-formatting
-                                    #   format=r -> list keys recursively
-                                    # format r and j can be combined 
-kvexists <key>                      # checks if a key exists
-kvflush_garbage                     # removes all empty folders from database
-kvclear                             # clear database
+kvset <key> <value>                       # create or change value of key
+kvget <key> [<default-value>]             # get value of key or get the optional default
+kvdel <key> [type: key|path|all]          # delete key or path
+                                          #   type=key -> just delete key 
+                                          #   type=path -> just delete path (all keys below <key>!) 
+                                          #   type=all -> delete key and path 
+kvfind <key> [<path>] [<type>: [k][v]     # find entries by key. type defines what is returned key, value or both
+kvgrep <value> [<path>] [<type>: [k][v]]  # find entries by value. type defines what is returned key, value or both
+kvlist [<path>] [<type>: [j][r][k][v]]    # list all current key/value pairs. 
+                                          #   format=j -> mark folders with a trailing @. useful when json-formatting
+                                          #   format=r -> list keys recursively
+                                          #   format=k -> show key
+                                          #   format=v -> show value
+                                          # all types can be combined 
+kvexists <key>                            # checks if a key exists
+kvflush_garbage                           # removes all empty folders from database
+kvclear                                   # clear database
 ```
 
 **Keys**

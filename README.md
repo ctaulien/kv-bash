@@ -40,7 +40,7 @@ kvclear                             # clear database
 
 **Keys**
 
-A keys can be organized in folders, where the backslash is the separator for building
+A keys can be organized in folders, where the slash is the separator for building
 the tree structure. Unlike in file systems, a key can be a folder with subkeys and have a value at the same time. Internally this is mangaged by naming folders with a trailing @ sign. Therefore you cannot have an @ sign as part of the key name.
 
 **Examples**
